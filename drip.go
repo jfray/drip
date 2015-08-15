@@ -96,6 +96,18 @@ func main() {
 	}
 	// COMMON PORTION BETWEEN ALL SUBCOMMANDS
 
-	cc.Create(*howMany)
+	// need to figure out how to do the whole subcommand thing
+	//log.Printf("Create %d hosts", *howMany)
+	//cc.Create(*howMany)
 
+	log.Println("LIST ALL")
+	cc.List()
+
+	//log.Println("SHOW 6605949")
+	//cc.Show(6605949)
+
+	log.Println("DESTROY ALL")
+	if err := cc.Destroy(6605948); err != nil {
+		log.Fatalf("Could not destroy ID %d: %v", 6605948, err)
+	}
 }
