@@ -2,56 +2,30 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"html/template"
 	"io/ioutil"
 	"log"
+	"net"
+	"path/filepath"
+	"strings"
+
+	"code.google.com/p/go-uuid/uuid"
 
 	"github.com/digitalocean/godo"
-	"github.com/gocql/gocql"
 	"golang.org/x/oauth2"
 )
 
 var (
-	baseDir       = "/Users/jfray/Dropbox/Hosting/DigitalOcean"
-	hostnameBase  = "a8"
-	tokenLocation = flag.String(
-		"token_location",
-		fmt.Sprintf("%s/secret/auth_token", baseDir),
-		"have your token in a file and put it here.",
-	)
-	configLocation = flag.String(
-		"config_location",
-		fmt.Sprintf("%s/conf/cloud-config.tmpl", baseDir),
-		"Your cloud-config template should be here.",
-	)
-
-	datacenter = flag.String(
-		"datacenter",
-		"sfo1",
-		"which datacenter do you want to put this thing in?",
-	)
-	size = flag.String(
-		"size",
-		"2gb",
-		"what size image do you want to build?",
-	)
-	image = flag.String(
-		"image",
-		"coreos-stable",
-		"which os image do you want to install?",
-	)
-	sshKeys = flag.Int(
-		"ssh_keys",
-		1201425,
-		"which ssh key pair to use? (ID)",
-	)
-	clusterName = flag.String(
-		"cluster_name",
+	cluster = flag.String(
+		"cluster",
 		"sfo1-1",
-		"name of unique cluster",
+		"which cluster are we working with?",
 	)
+	datacenter = strings.Split(*cluster, "-")[0]
+	confDir    = "./.drip"
 )
 
 type TokenSource struct {
@@ -65,68 +39,126 @@ func (t *TokenSource) Token() (*oauth2.Token, error) {
 	return token, nil
 }
 
-type Config struct {
-	Token string
+type MainConfig struct {
+	HostnamePrefix string `json:"hostname_prefix"`
+	MaxHosts       int    `json:"max_hosts"`
+	Token          string `json:"token"`
 }
 
-func main() {
-	flag.Parse()
+type ClusterConfig struct {
+	Image  string `json:"image"`
+	Size   string `json:"size"`
+	SSHKey int    `json:"ssh_key"`
+	Token  string `json:"token"`
+}
 
-	authToken, err := ioutil.ReadFile(*tokenLocation)
-	if err != nil {
-		log.Fatalf("Could not read token: %q", err)
-	}
-	log.Printf("TOKEN: %s", authToken)
-	cc, err := ioutil.ReadFile(*configLocation)
-	if err != nil {
-		log.Fatalf("Could not read config template: %q", err)
-	}
-	log.Printf("CONFIG: %s", cc)
+type ConfiguredClient struct {
+	Client      *godo.Client
+	CloudConfig string
+	MainConfig
+	ClusterConfig
+}
 
+func authorize(authToken string) *godo.Client {
 	tokenSource := &TokenSource{
-		AccessToken: string(authToken),
+		AccessToken: authToken,
 	}
 	oauthClient := oauth2.NewClient(oauth2.NoContext, tokenSource)
+	return godo.NewClient(oauthClient)
+}
 
-	client := godo.NewClient(oauthClient)
-	dropletName := fmt.Sprintf("%s-%s", hostnameBase, gocql.TimeUUID().String()[:6])
-
-	sshKeyToUse := godo.DropletCreateSSHKey{ID: *sshKeys}
-
-	var cfg bytes.Buffer
-	t := template.New("config_template") //create a new template
-	t, err = t.Parse(string(cc))         //open and parse a template text file
-	if err != nil {
-		log.Fatalf("Caught an error trying to load the template: %q", err)
+func (cc *ConfiguredClient) create(howMany int) (net.IP, error) {
+	if howMany > cc.MainConfig.MaxHosts {
+		log.Fatalf(
+			"For safety measures, you cannot build more than %d hosts at a "+
+				"time.",
+			cc.MainConfig.MaxHosts,
+		)
 	}
 
-	clusterTokenLocation := fmt.Sprintf("%s/conf/cluster_token-%s", baseDir, *clusterName)
-	clusterToken, err := ioutil.ReadFile(clusterTokenLocation)
-	if err != nil {
-		log.Fatalf("Could not get cluster config token: %q", err)
-	}
-	log.Printf("Cluster token for %s cluster: %s", clusterName, string(clusterToken))
-	config := Config{Token: string(clusterToken)}
-
-	if err = t.Execute(&cfg, config); err != nil {
-		log.Fatalf("Error caught executing template: %q", err)
-	}
-	cloudConfig := cfg.String()
+	dropletName := fmt.Sprintf(
+		"%s-%s-%s",
+		cc.MainConfig.HostnamePrefix,
+		*cluster,
+		uuid.New()[:6],
+	)
+	sshKeyToUse := godo.DropletCreateSSHKey{ID: cc.ClusterConfig.SSHKey}
 
 	createRequest := &godo.DropletCreateRequest{
 		Name:              dropletName,
-		Region:            *datacenter,
-		Size:              *size,
+		Region:            datacenter,
+		Size:              cc.ClusterConfig.Size,
 		SSHKeys:           []godo.DropletCreateSSHKey{sshKeyToUse},
 		PrivateNetworking: true,
-		UserData:          cloudConfig, // read this in as a template
+		UserData:          cc.CloudConfig,
 		Image: godo.DropletCreateImage{
-			Slug: *image,
+			Slug: cc.ClusterConfig.Image,
 		},
 	}
-	newDroplet, _, err := client.Droplets.Create(createRequest)
+	newDroplet, _, err := cc.Client.Droplets.Create(createRequest)
 	if err != nil {
 		log.Fatalf("Something bad happened: %s\n\n", err)
 	}
-	log.Printf("My new dude is here: %+v", newDroplet)
+	log.Printf("My new dude is here: %d %s", newDroplet.ID, newDroplet.Name)
+
+	return net.ParseIP("1.2.3.4"), nil
+}
+
+func main() {
+	// COMMON PORTION BETWEEN ALL SUBCOMMANDS
+	flag.Parse()
+	fullPath, err := filepath.Abs(confDir)
+	if err != nil {
+		log.Fatalf("Error with conf directory: %q", err)
+	}
+
+	// import the main json config file
+	var mainConfig MainConfig
+	mConfigFile, err := ioutil.ReadFile(fmt.Sprintf("%s/conf.json", fullPath))
+	if err != nil {
+		log.Fatalf("Could not read main config file: %q", err)
+	}
+
+	err = json.Unmarshal(mConfigFile, &mainConfig)
+	if err != nil {
+		log.Fatalf("Could not unmarshal main config file: %q", err)
+	}
+	client := authorize(mainConfig.Token)
+
+	// get the cluster-specific json config
+	var clusterConfig ClusterConfig
+	cConfigFile, err := ioutil.ReadFile(
+		fmt.Sprintf(
+			"%s/clusters/%s/conf.json",
+			fullPath,
+			*cluster,
+		),
+	)
+	if err = json.Unmarshal(cConfigFile, &clusterConfig); err != nil {
+		log.Fatalf("Could not unmarshal cluster config file: %q", err)
+	}
+
+	var cloudConfigRendered bytes.Buffer
+	t := template.New("cloud_config")
+	cloudConfigTemplate, err := ioutil.ReadFile(
+		fmt.Sprintf(
+			"%s/templates/cloud-config.tmpl",
+			fullPath,
+		),
+	)
+	t, err = t.Parse(string(cloudConfigTemplate))
+	if err != nil {
+		log.Printf("Caught an error trying to load the template: %q", err)
+	}
+
+	if err = t.Execute(&cloudConfigRendered, clusterConfig); err != nil {
+		log.Fatalf("Error caught executing template: %q", err)
+	}
+	cloudConfig := cloudConfigRendered.String()
+
+	cc := ConfiguredClient{client, cloudConfig, mainConfig, clusterConfig}
+	// COMMON PORTION BETWEEN ALL SUBCOMMANDS
+
+	cc.create(1)
+
 }
