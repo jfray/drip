@@ -1,12 +1,8 @@
 package drip_client
 
-import (
-	"log"
+import "github.com/digitalocean/godo"
 
-	"github.com/digitalocean/godo"
-)
-
-func (cc *DripClient) List() error {
+func (cc *DripClient) List() ([]godo.Droplet, error) {
 	// create a list to hold our droplets
 	list := []godo.Droplet{}
 
@@ -15,7 +11,7 @@ func (cc *DripClient) List() error {
 	for {
 		droplets, resp, err := cc.Client.Droplets.List(opt)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		// append the current page's droplets to our list
@@ -30,16 +26,12 @@ func (cc *DripClient) List() error {
 
 		page, err := resp.Links.CurrentPage()
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		// set the page we want for the next request
 		opt.Page = page + 1
 	}
 
-	for _, dl := range list {
-		log.Printf("ID: %d, Name: %s, IP: %s", dl.ID, dl.Name, dl.Networks)
-	}
-
-	return nil
+	return list, nil
 }

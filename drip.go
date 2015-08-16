@@ -98,16 +98,32 @@ func main() {
 
 	// need to figure out how to do the whole subcommand thing
 	//log.Printf("Create %d hosts", *howMany)
-	//cc.Create(*howMany)
+	//droplets, err := cc.Create(*howMany)
+	//if err != nil {
+	//		log.Fatalf("Could not create droplets: %q", err)
+	//	}
+	//	for _, droplet := range droplets {
+	//		log.Printf("here is what I have for create: %+v", droplet)
+	//	}
 
-	log.Println("LIST ALL")
-	cc.List()
+	list, err := cc.List()
+	for _, l := range list {
+		log.Printf("Here is my list of names/IDs: %s %d", l.Name, l.ID)
+	}
 
 	//log.Println("SHOW 6605949")
 	//cc.Show(6605949)
 
-	log.Println("DESTROY ALL")
-	if err := cc.Destroy(6605948); err != nil {
-		log.Fatalf("Could not destroy ID %d: %v", 6605948, err)
-	}
+	/*
+		log.Println("DESTROY ALL")
+		responses, err := cc.Destroy(6620248, 6620249, 6620250)
+		if err != nil {
+			log.Fatalf("Could not get all of them: %q", err)
+		}
+
+		for _, response := range responses {
+			log.Printf("Response: %s", response)
+		}
+	*/
+
 }

@@ -1,15 +1,12 @@
 package drip_client
 
-import "log"
+import "github.com/digitalocean/godo"
 
-func (cc *DripClient) Show(ID int) error {
-	// create options. initially, these will be blank
+func (cc *DripClient) Show(ID int) (*godo.Droplet, error) {
 	droplet, _, err := cc.Client.Droplets.Get(ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	log.Printf("ID: %d, Name: %s, IP: %s", droplet.ID, droplet.Name, droplet.Networks)
-
-	return nil
+	return droplet, nil
 }
