@@ -1,11 +1,9 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"html/template"
 	"io/ioutil"
 	"log"
 	"path/filepath"
@@ -38,7 +36,13 @@ func main() {
 
 	// import the main json config file
 	var mainConfig config.MainConfig
-	mConfigFile, err := ioutil.ReadFile(fmt.Sprintf("%s/conf.json", fullPath))
+	mainConfig.FilePath = fullPath
+	mConfigFile, err := ioutil.ReadFile(
+		fmt.Sprintf(
+			"%s/conf.json",
+			mainConfig.FilePath,
+		),
+	)
 	if err != nil {
 		log.Fatalf("Could not read main config file: %q", err)
 	}
@@ -55,41 +59,21 @@ func main() {
 	// Add some basic info to the config
 	clusterConfig.Name = *cluster
 	clusterConfig.Datacenter = datacenter
-
-	cConfigFile, err := ioutil.ReadFile(
-		fmt.Sprintf(
-			"%s/clusters/%s/conf.json",
-			fullPath,
-			*cluster,
-		),
+	clusterConfig.FilePath = fmt.Sprintf(
+		"%s/clusters/%s/conf.json",
+		fullPath,
+		*cluster,
 	)
+
+	cConfigFile, err := ioutil.ReadFile(clusterConfig.FilePath)
 	if err = json.Unmarshal(cConfigFile, &clusterConfig); err != nil {
 		log.Fatalf("Could not unmarshal cluster config file: %q", err)
 	}
 
-	var cloudConfigRendered bytes.Buffer
-	t := template.New("cloud_config")
-	cloudConfigTemplate, err := ioutil.ReadFile(
-		fmt.Sprintf(
-			"%s/templates/cloud-config.tmpl",
-			fullPath,
-		),
-	)
-	t, err = t.Parse(string(cloudConfigTemplate))
-	if err != nil {
-		log.Printf("Caught an error trying to load the template: %q", err)
-	}
-
-	if err = t.Execute(&cloudConfigRendered, clusterConfig); err != nil {
-		log.Fatalf("Error caught executing template: %q", err)
-	}
-	cloudConfig := cloudConfigRendered.String()
-
 	cc := drip_client.DripClient{
-		client,
-		cloudConfig,
-		mainConfig,
-		clusterConfig,
+		Client:        client,
+		MainConfig:    mainConfig,
+		ClusterConfig: clusterConfig,
 	}
 	// COMMON PORTION BETWEEN ALL SUBCOMMANDS
 

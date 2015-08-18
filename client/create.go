@@ -1,7 +1,10 @@
 package drip_client
 
 import (
+	"bytes"
 	"fmt"
+	"io/ioutil"
+	"text/template"
 
 	"code.google.com/p/go-uuid/uuid"
 	"github.com/digitalocean/godo"
@@ -17,6 +20,33 @@ func (cc *DripClient) Create(howMany int) ([]*godo.Droplet, error) {
 			cc.MainConfig.MaxHosts,
 		)
 	}
+
+	// check to see how many machines already exist. If none then generate a
+	// discovery token and write it to the json
+	if err := cc.UpdateDiscoveryToken(); err != nil {
+		return nil, fmt.Errorf("No chill here: %q", err)
+	}
+
+	// process the cloud config template and add to the config
+	var cloudConfigRendered bytes.Buffer
+	t := template.New("cloud_config")
+	cloudConfigTemplate, err := ioutil.ReadFile(
+		fmt.Sprintf(
+			"%s/templates/cloud-config.tmpl",
+			cc.MainConfig.FilePath,
+		),
+	)
+	t, err = t.Parse(string(cloudConfigTemplate))
+	if err != nil {
+		return nil, fmt.Errorf("Caught an error trying to load the template: %q", err)
+	}
+
+	if err = t.Execute(&cloudConfigRendered, cc.ClusterConfig); err != nil {
+		return nil, fmt.Errorf("Error caught executing template: %q", err)
+	}
+
+	cloudConfig := cloudConfigRendered.String()
+	cc.CloudConfig = cloudConfig
 
 	for i := 0; i < howMany; i++ {
 		dropletName := fmt.Sprintf(
